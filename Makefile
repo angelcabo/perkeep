@@ -2,6 +2,11 @@
 # doesn't require make. This file is mostly little convenient aliases
 # and notes.
 
+NAME   := ${USER}/perkeep
+TAG    := $$(git log master -1 --format=%h)
+IMG    := ${NAME}:${TAG}
+LATEST := ${NAME}:latest
+
 all:
 	go run make.go
 
@@ -20,3 +25,10 @@ dockerbuilddev:
 
 dockerpushdev: dockerbuilddev
 	docker push gcr.io/perkeep-containers/perkeep-dev-$(USER):latest
+
+build:
+	docker build -t ${IMG} .
+	docker tag ${IMG} ${LATEST}
+
+push:
+	docker push ${NAME}

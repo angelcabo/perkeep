@@ -1,78 +1,47 @@
-# Copyright 2014 The Perkeep Authors.
-# Generic purpose Perkeep image, that builds the server (perkeepd)
-# and the command-line clients (pk, pk-put, pk-get, and pk-mount).
+FROM golang:1.12-alpine3.10 as builder
 
-# TODO: add the HEIC-supporting imagemagick to this Dockerfile too, in
-# some way that's minimally gross and not duplicating
-# misc/docker/heiftojpeg's Dockerfile entirely. Not decided best way.
-# TODO: likewise, djpeg binary? maybe. https://perkeep.org/issue/1142
+RUN apk update && apk add sqlite-dev build-base
 
-FROM buildpack-deps:stretch-scm AS pkbuild
-
-MAINTAINER Perkeep Authors <perkeep@googlegroups.com>
-
-ENV DEBIAN_FRONTEND noninteractive
-
-# gcc for cgo, sqlite
-RUN apt-get update && apt-get install -y --no-install-recommends \
-		g++ \
-		gcc \
-		libc6-dev \
-		make \
-		pkg-config \
-                libsqlite3-dev
-
-ENV GOLANG_VERSION 1.12.4
-
-WORKDIR /usr/local
-RUN wget -O go.tgz https://dl.google.com/go/go${GOLANG_VERSION}.linux-amd64.tar.gz
-RUN echo "d7d1f1f88ddfe55840712dc1747f37a790cbcaa448f6c9cf51bbe10aa65442f5 go.tgz" | sha256sum -c -
-RUN tar -zxvf go.tgz
-
-ENV GOROOT /usr/local/go
-ENV GOPATH /go
-ENV PATH $GOPATH/bin:/usr/local/go/bin:$PATH
-
-RUN mkdir -p "$GOPATH/src" "$GOPATH/bin" && chmod -R 777 "$GOPATH"
 WORKDIR $GOPATH
 
-# Add each directory separately, so our context doesn't include the
-# Dockerfile itself, to permit quicker iteration with docker's
-# caching.
-ADD .git /go/src/perkeep.org/.git
-add app /go/src/perkeep.org/app
-ADD clients /go/src/perkeep.org/clients
-ADD cmd /go/src/perkeep.org/cmd
-ADD config /go/src/perkeep.org/config
-ADD dev /go/src/perkeep.org/dev
-ADD doc /go/src/perkeep.org/doc
-ADD internal /go/src/perkeep.org/internal
-ADD pkg /go/src/perkeep.org/pkg
-ADD server /go/src/perkeep.org/server
-ADD vendor /go/src/perkeep.org/vendor
-ADD website /go/src/perkeep.org/website
-ADD make.go /go/src/perkeep.org/make.go
-ADD VERSION /go/src/perkeep.org/VERSION
+ADD .git src/perkeep.org/.git
+ADD app src/perkeep.org/app
+ADD clients src/perkeep.org/clients
+ADD cmd src/perkeep.org/cmd
+ADD config src/perkeep.org/config
+ADD dev src/perkeep.org/dev
+ADD doc src/perkeep.org/doc
+ADD internal src/perkeep.org/internal
+ADD pkg src/perkeep.org/pkg
+ADD server src/perkeep.org/server
+ADD vendor src/perkeep.org/vendor
+ADD website src/perkeep.org/website
+ADD make.go src/perkeep.org/make.go
+ADD VERSION src/perkeep.org/VERSION
 
-WORKDIR /go/src/perkeep.org
-
+WORKDIR $GOPATH/src/perkeep.org
 RUN go run make.go --sqlite=true -v
 
+FROM alpine:3.10.2 as runner
 
+RUN apk update
+RUN apk --no-cache add tini=0.18.0-r0 su-exec=0.2-r0 sqlite-dev ca-certificates
+RUN update-ca-certificates
 
-FROM debian:stretch
+RUN adduser -D keepy
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-                libsqlite3-dev && rm -rf /var/lib/apt/lists/*
+WORKDIR /perkeep
+COPY --chown=root:root entrypoint.sh .
+COPY --chown=root:keepy --from=builder /go/bin/pk* ./bin/
+COPY --chown=root:keepy --from=builder /go/bin/perkeepd ./bin
+COPY --chown=root:keepy --from=builder /go/bin/publisher ./bin
+COPY --chown=root:keepy --from=builder /go/bin/scancab ./bin
+COPY --chown=root:keepy --from=builder /go/bin/scanningcabinet ./bin
 
-RUN mkdir -p /home/keepy/bin
-ENV HOME /home/keepy
-ENV PATH /home/keepy/bin:$PATH
-
-COPY --from=pkbuild /go/bin/pk* /home/keepy/bin/
-COPY --from=pkbuild /go/bin/perkeepd /home/keepy/bin/
+ENV PATH /perkeep/bin:$PATH
+ENV CAMLI_CONFIG_DIR /etc/perkeep
 
 EXPOSE 80 443 3179 8080
 
-WORKDIR /home/keepy
-CMD /bin/bash
+ENTRYPOINT ["tini", "--", "/perkeep/entrypoint.sh"]
+CMD ["server"]
